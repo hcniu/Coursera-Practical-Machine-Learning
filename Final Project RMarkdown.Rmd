@@ -1,0 +1,134 @@
+---
+title: "Hao-Chun, Niu Final Project for Practical Machine Learning Course"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(modelr)
+library(randomForest)
+library(e1071)
+setwd("~/Desktop/R Note/Practical Machine Learning/Final Project")
+```
+
+## Brief Introduction
+In order to accurately predict the classes based on WLE data set, I will come up with several classification methods. The entire process could be divided into three main steps. First, I will read the training data sets, divide the training data sets into one sub-training data set and one sub-testing data set, and clean out the redundant variables. Second, due to the fact that there are too many useful variables within the data set, I will conduct the principle component analysis to transform the data set. Lastly, I will create three different classification models, Random Forest, Boosting with GBM, and SVM, and assess the performance of each model.
+
+## 1. Data Preparation and Tidy
+
+The raw data have about 19622 observations and 160 variables. Thus, the data is quite complicated.
+```{r,echo=FALSE}
+df<-read.csv("pml-training.csv")
+dim(df)
+```
+Yet, the data includes a lot of redundant variables. For instance, the variables that include "max_" in their column names calculate the maximum value of the previous variables. Thus, they are redundant. At the end, I discard all those variables that contain "min_", "max_", "var_", "avg_", "amplitude_", "skewness_", "kurtosis_", "stddev_" in their column names and only 55 variables remain.
+```{r ,echo=FALSE}
+non<-colnames(df)[str_detect(colnames(df),c("^min_|^var_|^max_|^avg_|^amplitude_|^skewness_|^kurtosis_|^stddev_"))]
+df<-select(df,-non)
+df<-df[,-c(1,2,3,4,5)]
+dim(df)
+```
+As for our y, there are totally 5 levels ("A", "B", "C", "D", "E") in the classe variable. The A classe has the largest proportion, about 30 percent. As for the rest of the classes, they each take about 18 percent.
+
+```{r ,echo=FALSE}
+table(df$classe)
+prop.table(table(df$classe))
+```
+Next, before I subset the training data set into sub-training and sub-testing, I check the correlation among the continuous variables to discard the ones that are highly correlated with others. Eventually, I find 7 variables that are corrrelated with others, and the correlation rates are larger than 0.9. Then, I remove those 7 columns and get my final data set.
+```{r ,echo=TRUE}
+correlation<-cor(df[,-c(1,55)])
+high_cor<-findCorrelation(correlation,cutoff = 0.9)
+sort(high_cor)
+```
+Then, I remove those 7 columns and get my final data set with 19622 observations and 48 variables.
+```{r ,echo=FALSE}
+high_cor<-high_cor+1
+df<-df[,-high_cor]
+dim(df)
+```
+Lastly, I divide the data set into a sub-training data set and sub-testing test. The sub-training data set has 70 percent of the observations (13737), and the sub-testing data set has the rest of the 30 percent (5885).
+```{r ,echo=TRUE}
+inTrain<-createDataPartition(df$classe,p=0.7,list = F)
+testing<-df[-inTrain,]
+training<-df[inTrain,]
+dim(training)
+dim(testing)
+```
+
+
+## 2.Principal Component Analysis (PCA)
+From the result of the first stage, I notice that there are still too many variables. Therefore, I decide to conduct PCA to reduce the complexity of the data set. First, I transform the training data set. According to the result, to capture more than 90 percent of the variance, I have to create 20 principle components.
+```{r ,echo=TRUE}
+preProc<-preProcess(training[,-48],method = "pca",thresh = 0.9)
+preProc
+trained<-predict(preProc,training[,-48])
+trained<-mutate(trained,"classe"=training$classe)
+head(trained)
+```
+Next, I do the exactly same transformation to the testing data set.
+```{r, echo=FALSE}
+tested<-predict(preProc,testing[,-48])
+tested<-mutate(tested,"classe"=testing$classe)
+```
+```{r, echo=TRUE}
+head(tested)
+```
+
+
+## 3-1. Modeling: Random Forest
+The first model I am going to create is the random forest model. I will use all 21 predictors to predict the outcome, classe. Besides, I use Bootstrap as my resampling method with 25 repeats. The performance is outstanding. To be more specific, the final model has more than 95 percent accuracy rate.  
+```{r, echo=TRUE}
+model_rf<-train(classe~.,data = trained,method="rf")
+model_final_rf<-model_rf$finalModel
+model_rf
+```
+The result below shows the detail of the final model. The final model creates 500 trees with 2 variables use at each node. In addition, the OOB estimate of error rate is less than 3 percent. In general, this model is pretty effective.
+```{r, echo=FALSE}
+model_rf$finalModel
+```
+Lastly, I predict the testing data, using the random forest model. The result is showed below. Based on the confusion matrix, the accuracy rate is above 95 percent. Besides, almost all the sensitivity and specificity rates for all 5 level of classe reach 95 percent. Hence, the model has accurately predicted the testing data.
+```{r, echo=TRUE}
+pred_rf<-predict(model_rf,tested)
+freq_rf<-table(tested$classe,pred_rf)
+confusionMatrix(freq_rf)
+```
+
+
+## 3-2. Modeling: Boosting (gbm)
+Next, I am going to create a boosting model using the gbm method. I will also use all 21 predictors to predict the outcome, classe, and use Bootstrap as my resampling method. The performance is fine but way worse than the random forest model. The final model's accuracy rate only reaches about 80 percent.
+```{r, echo=TRUE}
+model_gbm<-train(classe~.,data = trained,method="gbm",verbose=FALSE)
+model_final_gbm<-model_gbm$finalModel
+model_gbm
+```
+The result below shows the detail of the final model. The final values used for the model are n.trees = 150, interaction.depth=3.
+```{r, echo=FALSE}
+model_gbm$finalModel
+```
+Next, I predict the testing data, using the boosting (gbm) model. The result is printed below. According to the confusion matrix, around 80 percent of the observations are predicted accurately. In addition, the average of model's sensitivity rates is about 80 percent, and the average of model's specificity rates is about 95 percent.
+```{r, echo=TRUE}
+pred_gbm<-predict(model_gbm,tested)
+freq_gbm<-table(tested$classe,pred_gbm)
+confusionMatrix(freq_gbm)
+```
+
+
+## 3-3. Modeling: SVM
+The last but not least, I create a SVM model as well. To be more specific, I use all 21 predictors to predict the outcome, classe. Because I do not use Bootstrap to resample the data, I only create one model.
+```{r, echo=TRUE}
+model_svm<-svm(classe~.,data = trained)
+model_svm
+```
+Next, I predict the testing data, using the SVM model, and print the result below. The performance is better than the boosting (gbm) model but slightly worse than the random forest model. The accuracy rate reaches more than 90 percent. Besides, both the average sensitivity rate and specificity rate reach more than 90 percent.
+```{r, echo=TRUE}
+pred_svm<-predict(model_svm,tested,type="class")
+freq_svm<-table(tested$classe,pred_svm)
+confusionMatrix(freq_svm)
+```
+
+
+## Summary:
+In conclusion, among all three methods, the random forest model is the most powerful one. However, the model takes a long time to calculate. Hence, to be practical, the most useful model would be the SVM model, which takes a much less of computing time but only has a slightly smaller accuracy rate.
